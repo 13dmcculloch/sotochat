@@ -19,6 +19,7 @@
 #define MESSENGER_ID 1
 
 #define SHM_PATH "/tmp/chatsock"  /* IPs of clients */ 
+#define SHM_KEY_ID 1
 
 /* return -1 on error */
 int create_tcp_server(char *client_ip, short port, int backlog);
