@@ -1,7 +1,11 @@
 #include "server.h"
 
-static int client_process(int client_fd);
+/* return -1 on error, otherwise in_addr of disconnected client */
+static struct in_addr client_process(int client_fd);
+
 static int message_process(short port2);
+
+static void sort_child(int signal);
 
 int server(int port1, int port2)
 {
@@ -23,6 +27,9 @@ int server(int port1, int port2)
     }
 
     memset(addr_p, 0, MAX_CONNS);
+
+    /* signals */
+    signal(SIGCHLD, sort_child);
 
     if(!fork()) return message_process(port2);
 
@@ -59,15 +66,34 @@ int server(int port1, int port2)
                 }
             }
 
-            return client_process(client_fd);
+            /* enter client process handler */
+            struct in_addr last_addr;
+            if((last_addr.s_addr = client_process(client_fd).s_addr) < 0)
+            {
+                fputs("Error quitting client process.\n", stderr);
+                return 1;
+            }
+
+            /* remove address of disconnected client */
+            for(int i = 0; i < MAX_CONNS; ++i)
+            {
+                if(addr_p[i].s_addr == last_addr.s_addr)
+                {
+                    addr_p[i].s_addr = 0;
+                    break;
+                }
+            }
         }
     }
 
     return 0;
 }
 
-static int client_process(int client_fd)
+static struct in_addr client_process(int client_fd)
 {
+    struct in_addr return_addr;
+    return_addr.s_addr = -1;
+
     struct sockaddr_un message_sa;
     message_sa.sun_family = AF_UNIX;
     strcpy(message_sa.sun_path, MESSENGER_PATH);
@@ -76,15 +102,25 @@ static int client_process(int client_fd)
     if(message_fd < 0)
     {
         perror("client_process: socket");
-        return 1;
+        return return_addr;
     }
 
     if(connect(message_fd, (struct sockaddr *)&message_sa, 
         sizeof message_sa) < 0)
     {
         perror("client_process: connect");
-        return 1;
+        return return_addr;
     }
+
+    struct sockaddr_in client_sa;
+    socklen_t client_len = sizeof client_sa;
+    if(getpeername(client_fd, (struct sockaddr *)&client_sa, &client_len) < 0)
+    {
+        perror("client_process: getpeername");
+        return return_addr;
+    }
+
+    printf("Incoming connection from %s\n", inet_ntoa(client_sa.sin_addr));
 
     char msg_buf[MESSAGE_BUF_LEN];
     while(read(client_fd, msg_buf, sizeof msg_buf))
@@ -96,11 +132,15 @@ static int client_process(int client_fd)
         if(write(message_fd, msg_buf, sizeof msg_buf) < 0)
         {
             perror("client_process: write");
-            return 1;
+            return return_addr;
         }
     } 
 
-    return 0;
+    printf("%s disconnected.\n", inet_ntoa(client_sa.sin_addr));
+
+    close(client_fd);
+
+    return client_sa.sin_addr;
 }
 
 static int message_process(short port2)
@@ -153,23 +193,32 @@ static int message_process(short port2)
     char msg_buf[MESSAGE_BUF_LEN];
     while(recv(message_fd, msg_buf, sizeof msg_buf, 0) > 0)
     {
-        struct sockaddr_in tmp_sa;
-
+        /* check sockets */
         int i;
         for(i = 0; i < MAX_CONNS; ++i)
         {
-            /* open new socket if client_fd is 0 */
-            if(client_fd[i] == 0)
+            if(!client_fd[i])  /* socket open */
             {
+                /* open socket? */
                 if(!addr_p[i].s_addr) continue;
+
                 client_fd[i] = create_tcp_client(inet_ntoa(addr_p[i]), 
                     port2);
                 break;
             }
-        }
-        /* handle closed sockets here (no longer in shm) */
+            else  /* socket closed */
+            {
+                /* close socket? */
+                if(!addr_p[i].s_addr)
+                {
+                    close(client_fd[i]);
+                    client_fd[i] = 0;
+                }
+            }
 
-        /* loop through and write to open sockets */
+        }
+
+        /* write to sockets */
         for(int j = 0; j < MAX_CONNS; ++j)
         {
             if(client_fd[j] == 0) continue;
@@ -178,4 +227,9 @@ static int message_process(short port2)
     }
 
     return 0;
+}
+
+static void sort_child(int signal)
+{
+    wait(NULL);
 }
