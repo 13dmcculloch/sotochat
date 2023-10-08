@@ -1,4 +1,6 @@
-/* Network includes to speed things up */
+/* Includes for network.
+Douglas McCulloch, October 2023
+*/
 
 #include <unistd.h>
 #include <string.h>

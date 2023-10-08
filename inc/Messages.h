@@ -1,5 +1,9 @@
 /* Message struct and functions
- */
+Todo:
+    - TLV encode everything?
+
+Douglas McCulloch, October 2023
+*/
 
 #ifndef MESSAGE_H
 #define MESSAGE_H
