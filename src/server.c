@@ -3,6 +3,9 @@
 static int client_process(int client_fd);
 static int message_process(short port2);
 
+static void clients_list(const int *client_fd);
+static void addr_list(const struct in_addr *addr_p);
+
 int server(int port1, int port2)
 {
     /* shared memory */
@@ -58,6 +61,8 @@ int server(int port1, int port2)
                     break;
                 }
             }
+
+            addr_list(addr_p);
 
             return client_process(client_fd);
         }
@@ -153,8 +158,6 @@ static int message_process(short port2)
     char msg_buf[MESSAGE_BUF_LEN];
     while(recv(message_fd, msg_buf, sizeof msg_buf, 0) > 0)
     {
-        struct sockaddr_in tmp_sa;
-
         int i;
         for(i = 0; i < MAX_CONNS; ++i)
         {
@@ -168,6 +171,7 @@ static int message_process(short port2)
             }
         }
         /* handle closed sockets here (no longer in shm) */
+        clients_list(client_fd);
 
         /* loop through and write to open sockets */
         for(int j = 0; j < MAX_CONNS; ++j)
@@ -178,4 +182,20 @@ static int message_process(short port2)
     }
 
     return 0;
+}
+
+static void clients_list(const int *client_fd)
+{
+    fputs("Clients: ", stderr);
+    for(int i = 0; i < MAX_CONNS; ++i)
+        fprintf(stderr, "%d ", client_fd[i]);
+    fputs("\n", stderr);
+}
+
+static void addr_list(const struct in_addr *addr_p)
+{
+    fputs("Addresses:", stderr);
+    for(int i = 0; i < MAX_CONNS; ++i)
+        fprintf(stderr, "%d ", addr_p[i].s_addr);
+    fputs("\n", stderr);
 }
