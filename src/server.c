@@ -6,7 +6,7 @@ Douglas McCulloch, October 2023
 
 #define DEBUG
 
-static int client_process_w(int server_fd, struct in_addr *addr_p);
+static int client_process_w(short port1);
 
 /* return -1 on error, otherwise in_addr of disconnected client */
 static struct in_addr client_process(int client_fd);
@@ -30,22 +30,23 @@ static struct in_addr *shm_addr_attach();
 
 int server(int port1, int port2)
 {
-    struct in_addr *addr_p = shm_addr_create();
-
-    /* signals */
     signal(SIGCHLD, sort_child);
 
     if(!fork()) return message_process(port2);
+
+    return client_process_w(port1);
+}
+
+static int client_process_w(short port1)
+{
+    struct in_addr *addr_p = shm_addr_create();
 
     struct in_addr any_ip;
     any_ip.s_addr = INADDR_ANY;
     int server_fd = create_tcp_server(inet_ntoa(any_ip), port1, MAX_CONNS);
 
-    return client_process_w(server_fd, addr_p);
-}
+    signal(SIGCHLD, sort_child);
 
-static int client_process_w(int server_fd, struct in_addr *addr_p)
-{
     int client_fd;
     while((client_fd = accept(server_fd, (struct sockaddr *)NULL,
         NULL)) > 0)
@@ -55,6 +56,8 @@ static int client_process_w(int server_fd, struct in_addr *addr_p)
 
         if(!client_pid) 
         {
+            close(server_fd);
+
             int rc;
             if((rc = addr_add(client_fd, addr_p))) return rc;
 

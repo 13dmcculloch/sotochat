@@ -41,14 +41,6 @@ int create_tcp_client(char *server_ip, short port)
 
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
 
-    /*
-    if(bind(server_fd, (struct sockaddr *) &server_sa, sizeof server_sa) < 0)
-    {
-        perror("create_tcp_client: bind");
-        return -1;
-    }
-    */
-
     if(connect(server_fd, (struct sockaddr *) &server_sa, 
         sizeof server_sa) < 0)
     {
