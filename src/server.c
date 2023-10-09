@@ -4,6 +4,7 @@ Douglas McCulloch, October 2023
 
 #include "server.h"
 
+#ifndef DEBUG
 #define DEBUG
 
 static int client_process_w(short port1);
@@ -28,7 +29,7 @@ static void sort_child(int signal);
 static struct in_addr *shm_addr_create();
 static struct in_addr *shm_addr_attach();
 
-int server(int port1, int port2)
+int server(short port1, short port2)
 {
     signal(SIGCHLD, sort_child);
 
@@ -51,6 +52,13 @@ static int client_process_w(short port1)
     while((client_fd = accept(server_fd, (struct sockaddr *)NULL,
         NULL)) > 0)
     {
+        fprintf(stderr, "new fd: %d\n", client_fd);
+        if(addr_add(client_fd, addr_p))
+        {
+            fputs("Error adding address to list\n", stderr);
+            return 1;
+        }
+
         pid_t client_pid;
         client_pid = fork();
 
@@ -59,7 +67,7 @@ static int client_process_w(short port1)
             close(server_fd);
 
             int rc;
-            if((rc = addr_add(client_fd, addr_p))) return rc;
+            //if((rc = addr_add(client_fd, addr_p))) return rc;
 
             /* enter client process handler */
             struct in_addr last_addr;
@@ -68,11 +76,69 @@ static int client_process_w(short port1)
                 fputs("server: client process error.\n", stderr);
                 return 1;
             }
+
+            #ifdef DEBUG
+            fputs("Exited client process.\n", stderr);
+            #endif
             
             if((rc = addr_remove(last_addr, addr_p))) return rc;
+
+            return 0;
         }
     }
     
+    return 0;
+}
+
+static int addr_add(int client_fd, struct in_addr *addr_p)
+{
+    /* add address of client to addr_p */
+    struct sockaddr_in client_sa;
+    socklen_t client_len = sizeof client_sa;  /* eat ass */
+
+    if(getpeername(client_fd, (struct sockaddr *)&client_sa, 
+        &client_len) < 0)
+    {
+        perror("server: getpeername");
+        return 1;
+    }
+
+    #ifdef DEBUG
+    fprintf(stderr, "Adding address %d\n", client_sa.sin_addr.s_addr);
+    #endif
+
+    for(int i = 0; i < MAX_CONNS; ++i)
+    {
+        if(addr_p[i].s_addr == 0)
+        {
+            addr_p[i].s_addr = client_sa.sin_addr.s_addr;
+            break;
+        }
+    }
+    
+    /* print contents after addition of address */
+    #ifdef DEBUG
+    for(int i = 0; i < MAX_CONNS; ++i)
+    {
+        fprintf(stderr, "%d ", addr_p[i].s_addr);
+    }
+    fprintf(stderr, "\n");
+    #endif
+
+    return 0;
+}
+
+static int addr_remove(struct in_addr last_addr, struct in_addr *addr_p)
+{
+    for(int i = 0; i < MAX_CONNS; ++i)
+    {
+        if(addr_p[i].s_addr == last_addr.s_addr)
+        {
+            addr_p[i].s_addr = 0;
+            break;
+        }
+    }
+
     return 0;
 }
 
@@ -130,44 +196,6 @@ static struct in_addr client_process(int client_fd)
     return client_sa.sin_addr;
 }
 
-static int addr_add(int client_fd, struct in_addr *addr_p)
-{
-    /* add address of client to addr_p */
-    struct sockaddr_in client_sa;
-    socklen_t client_len;
-
-    if(getpeername(client_fd, (struct sockaddr *)&client_sa, 
-        &client_len) < 0)
-    {
-        perror("server: getpeername");
-        return 1;
-    }
-
-    for(int i = 0; i < MAX_CONNS; ++i)
-    {
-        if(addr_p[i].s_addr == 0)
-        {
-            addr_p[i].s_addr = client_sa.sin_addr.s_addr;
-            break;
-        }
-    }
-    
-    return 0;
-}
-
-static int addr_remove(struct in_addr last_addr, struct in_addr *addr_p)
-{
-    for(int i = 0; i < MAX_CONNS; ++i)
-    {
-        if(addr_p[i].s_addr == last_addr.s_addr)
-        {
-            addr_p[i].s_addr = 0;
-            break;
-        }
-    }
-
-    return 0;
-}
 
 static int message_process(short port2)
 {
@@ -215,6 +243,15 @@ static int message_process(short port2)
 static int sockets_check(int client_fd[MAX_CONNS], struct in_addr *addr_p,
     short port2)
 {
+    #ifdef DEBUG
+    fputs("addr_p: ", stderr);
+    for(int i = 0; i < MAX_CONNS; ++i)
+    {
+        fprintf(stderr, "%d ", addr_p[i].s_addr);
+    }
+    fprintf(stderr, "\n");
+    #endif
+
     for(int i = 0; i < MAX_CONNS; ++i)
     {
         if(!client_fd[i])  /* socket open */
@@ -222,15 +259,34 @@ static int sockets_check(int client_fd[MAX_CONNS], struct in_addr *addr_p,
             /* open socket? */
             if(!addr_p[i].s_addr) continue;
 
+            #ifdef DEBUG
+            fprintf(stderr, "Attempt to open socket."
+                " With address %d"
+                " Which is %s\n", addr_p[i].s_addr, inet_ntoa(addr_p[i]));
+            #endif
+
             if((client_fd[i] = create_tcp_client(inet_ntoa(addr_p[i]), 
-                port2) < 0)) return 1;
+                port2) < 0))
+            {
+                fputs("sockets_check: failed to connect to client\n", stderr);
+                return 1;
+            }
+
+            #ifdef DEBUG
+            fprintf(stderr, "added socket %d\n", client_fd[i]);
+            #endif
+
             break;
         }
-        else  /* socket closed */
+        else if(client_fd[i] > 0)  /* socket closed */
         {
             /* close socket? */
             if(!addr_p[i].s_addr)
             {
+                #ifdef DEBUG
+                fputs("Attempt to close socket.\n", stderr);
+                #endif
+
                 if(close(client_fd[i]) < 0)
                 {
                     perror("sockets_check: close");
@@ -240,8 +296,22 @@ static int sockets_check(int client_fd[MAX_CONNS], struct in_addr *addr_p,
                 client_fd[i] = 0;
             }
         }
+        else
+        {
+            fputs("sockets_check: found bad socket fd.\n", stderr);
+            return 1;
+        }
 
     }
+
+    #ifdef DEBUG
+    fputs("client_fd: ", stderr);
+    for(int i = 0; i < MAX_CONNS; ++i)
+    {
+        fprintf(stderr, "%d ", client_fd[i]);
+    }
+    fprintf(stderr, "\n");
+    #endif
 
     return 0;
 }
@@ -249,8 +319,16 @@ static int sockets_check(int client_fd[MAX_CONNS], struct in_addr *addr_p,
 static int sockets_write(int client_fd[MAX_CONNS], 
     char msg_buf[MESSAGE_BUF_LEN])
 {
+    #ifdef DEBUG
+    fputs("client_fd: ", stderr);
+    #endif
+
     for(int j = 0; j < MAX_CONNS; ++j)
     {
+        #ifdef DEBUG
+        fprintf(stderr, "%d ", client_fd[j]);
+        #endif
+
         if(client_fd[j] == 0) continue;
 
         if(write(client_fd[j], msg_buf, 
@@ -259,11 +337,11 @@ static int sockets_write(int client_fd[MAX_CONNS],
             perror("sockets_write: write");
             return 1;
         }
-
-        #ifdef DEBUG
-        fputs("Sent to client.\n", stderr);
-        #endif
     }
+
+    #ifdef DEBUG
+    fputs("\n", stderr);
+    #endif
 
     return 0;
 }
@@ -281,7 +359,7 @@ static struct in_addr *shm_addr_create()
     key_t messenger_key = ftok(SHM_PATH, SHM_KEY_ID);
 
     int messenger_shmid = shmget(messenger_key, 
-        (sizeof(struct in_addr[MAX_CONNS])), IPC_CREAT | S_IWUSR | S_IRUSR);
+        sizeof(struct in_addr) * MAX_CONNS, IPC_CREAT | S_IWUSR | S_IRUSR);
     if(messenger_shmid < 0)
     {
         perror("server: shmget");
@@ -306,7 +384,7 @@ static struct in_addr *shm_addr_attach()
     key_t messenger_key = ftok(SHM_PATH, SHM_KEY_ID);
 
     int messenger_shmid = shmget(messenger_key, 
-        (sizeof(struct in_addr[MAX_CONNS])), S_IWUSR | S_IRUSR);
+        sizeof(struct in_addr) * MAX_CONNS, S_IWUSR | S_IRUSR);
     if(messenger_shmid < 0)
     {
         perror("message_process: shmget");
@@ -323,3 +401,4 @@ static struct in_addr *shm_addr_attach()
     return addr_p;
 }
 
+#endif

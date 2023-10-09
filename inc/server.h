@@ -4,6 +4,6 @@
 #include "network_libs.h"
 #include "Messages.h"
 
-extern int server(int port1, int port2);
+extern int server(short port1, short port2);
 
 #endif
