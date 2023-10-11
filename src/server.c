@@ -44,6 +44,11 @@ int server(int port1, int port2)
     while((client_fd = accept(server_fd, (struct sockaddr *)NULL,
         NULL)) > 0)
     {
+        #ifdef DEBUG
+        fprintf(stderr, "server_fd: %d\n", server_fd);
+        fprintf(stderr, "client_fd: %d\n", client_fd);
+        #endif
+
         pid_t client_pid;
         client_pid = fork();
 
@@ -78,18 +83,14 @@ int server(int port1, int port2)
                 /* case of empty entry */
                 if(client_p[i] < 0)
                 {
+                    /* this might be illegal... */
                     client_p[i] = message_socket;
                     break;
                 }
             }
 
             #ifdef DEBUG
-            fputs("client_p: ", stderr);
-            for(int i = 0; i < MAX_CONNS; ++i)
-            {
-                fprintf(stderr, "%d ", client_p[i]);
-            }
-            fputs("\n", stderr);
+            clients_list(client_p);
             #endif
 
             return client_process(client_fd);
@@ -179,6 +180,10 @@ static int message_process()
         return 1;
     }
 
+    #ifdef DEBUG
+    fprintf(stderr, "message_fd: %d\n", message_fd);
+    #endif
+
     char msg_buf[MESSAGE_BUF_LEN];
     while(recv(message_fd, msg_buf, sizeof msg_buf, 0) > 0)
     {
@@ -189,8 +194,19 @@ static int message_process()
         /* loop through and write to open sockets */
         for(int j = 0; j < MAX_CONNS; ++j)
         {
-            if(client_p[j] < 0) continue;
-            write(client_p[j], msg_buf, sizeof msg_buf);
+            int fd = client_p[j];
+
+            if(fd < 0) continue;
+
+            #ifdef DEBUG
+            fprintf(stderr, "Writing to %d\n", fd);
+            #endif
+
+            if(write(fd, msg_buf, sizeof msg_buf))
+            {
+                perror("message_process: write");
+                return 1;
+            }
         }
     }
 
