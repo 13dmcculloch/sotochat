@@ -14,7 +14,7 @@ int server(int port1, int port2)
     key_t messenger_key = ftok(SHM_PATH, SHM_KEY_ID);
 
     int messenger_shmid = shmget(messenger_key, 
-        (sizeof(int[MAX_CONNS])), IPC_CREAT | S_IWUSR | S_IRUSR);
+        (sizeof(int) * MAX_CONNS), IPC_CREAT | S_IWUSR | S_IRUSR);
     if(messenger_shmid < 0)
     {
         perror("server: shmget");
@@ -28,7 +28,7 @@ int server(int port1, int port2)
     }
 
     /* empty client file descriptor must be -1 as 0 is valid */
-    memset(client_p, -1, MAX_CONNS);
+    memset(client_p, -1, MAX_CONNS * sizeof(int));
 
     #ifdef DEBUG
     clients_list(client_p);
@@ -142,7 +142,7 @@ static int message_process()
     key_t messenger_key = ftok(SHM_PATH, SHM_KEY_ID);
 
     int messenger_shmid = shmget(messenger_key, 
-        (sizeof(int[MAX_CONNS])), S_IWUSR | S_IRUSR);
+        (sizeof(int) * MAX_CONNS), S_IWUSR | S_IRUSR);
     if(messenger_shmid < 0)
     {
         perror("message_process: shmget");
