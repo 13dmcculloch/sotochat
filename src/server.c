@@ -1,7 +1,12 @@
 #include "server.h"
 
+#ifndef DEBUG
+#define DEBUG
+
 static int client_process(int client_fd);
 static int message_process(short port2);
+
+static int clients_close(int *client_fd)
 
 static void clients_list(const int *client_fd);
 static void addr_list(const struct in_addr *addr_p);
@@ -25,7 +30,7 @@ int server(int port1, int port2)
         return 1;
     }
 
-    memset(addr_p, 0, MAX_CONNS);
+    memset(addr_p, 0, MAX_CONNS * sizeof(struct in_addr));
 
     if(!fork()) return message_process(port2);
 
@@ -62,7 +67,9 @@ int server(int port1, int port2)
                 }
             }
 
+            #ifdef DEBUG
             addr_list(addr_p);
+            #endif
 
             return client_process(client_fd);
         }
@@ -153,7 +160,7 @@ static int message_process(short port2)
 
     /* array of open client sockets */
     int client_fd[MAX_CONNS];  
-    memset(client_fd, 0, sizeof client_fd);
+    memset(client_fd, -1, sizeof client_fd);
 
     char msg_buf[MESSAGE_BUF_LEN];
     while(recv(message_fd, msg_buf, sizeof msg_buf, 0) > 0)
@@ -161,8 +168,8 @@ static int message_process(short port2)
         int i;
         for(i = 0; i < MAX_CONNS; ++i)
         {
-            /* open new socket if client_fd is 0 */
-            if(client_fd[i] == 0)
+            /* open new socket if client_fd is invalid */
+            if(client_fd[i] < 0)
             {
                 if(!addr_p[i].s_addr) continue;
                 client_fd[i] = create_tcp_client(inet_ntoa(addr_p[i]), 
@@ -171,13 +178,35 @@ static int message_process(short port2)
             }
         }
         /* handle closed sockets here (no longer in shm) */
+
+        #ifdef DEBUG
         clients_list(client_fd);
+        #endif
 
         /* loop through and write to open sockets */
         for(int j = 0; j < MAX_CONNS; ++j)
         {
-            if(client_fd[j] == 0) continue;
-            write(client_fd[j], msg_buf, sizeof msg_buf);
+            if(client_fd[j] < 0) continue;
+
+            if(write(client_fd[j], msg_buf, sizeof msg_buf) < 0)
+            {
+                perror("message_process: write");
+                return 1;
+            }
+        }
+    }
+
+    return 0;
+}
+
+static int clients_close(int *client_fd)
+{
+    for(int i = 0; i < MAX_CONNS; ++i)
+    {
+        if(close(client_fd[i]))
+        {
+            perror("clients_close: close");
+            return 1;
         }
     }
 
@@ -199,3 +228,5 @@ static void addr_list(const struct in_addr *addr_p)
         fprintf(stderr, "%d ", addr_p[i].s_addr);
     fputs("\n", stderr);
 }
+
+#endif
