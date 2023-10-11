@@ -11,11 +11,11 @@ int client(char *server_ip, short port1, short port2)
 
     int server_fd = create_tcp_client(server_ip, port1);
     
+    if(!fork()) return receive_messages(server_ip, port2);
+
     fputs("Username: ", stdout);
     fgets(msg.username, sizeof msg.username, stdin);
     msg.username[strcspn(msg.username, "\n")] = 0;
-
-    if(!fork()) return receive_messages(server_ip, port2);
 
     char msg_buf[MESSAGE_LEN];
     char send_buf[MESSAGE_BUF_LEN];

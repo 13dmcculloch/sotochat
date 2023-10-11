@@ -1,10 +1,12 @@
 #include "server.h"
 
+#ifndef DEBUG
+#define DEBUG
+
 static int client_process(int client_fd);
-static int message_process(short port2);
+static int message_process();
 
 static void clients_list(const int *client_fd);
-static void addr_list(const struct in_addr *addr_p);
 
 int server(int port1, int port2)
 {
@@ -12,22 +14,27 @@ int server(int port1, int port2)
     key_t messenger_key = ftok(SHM_PATH, SHM_KEY_ID);
 
     int messenger_shmid = shmget(messenger_key, 
-        (sizeof(struct in_addr[MAX_CONNS])), IPC_CREAT | S_IWUSR | S_IRUSR);
+        (sizeof(int[MAX_CONNS])), IPC_CREAT | S_IWUSR | S_IRUSR);
     if(messenger_shmid < 0)
     {
         perror("server: shmget");
         return 1;
     }
-    struct in_addr *addr_p = (struct in_addr *)shmat(messenger_shmid, NULL, 0);
-    if((void *)addr_p == (void *)-1)
+    int *client_p = (int *)shmat(messenger_shmid, NULL, 0);
+    if((void *)client_p == (void *)-1)
     {
         perror("server: shmat");
         return 1;
     }
 
-    memset(addr_p, 0, MAX_CONNS);
+    /* empty client file descriptor must be -1 as 0 is valid */
+    memset(client_p, -1, MAX_CONNS);
 
-    if(!fork()) return message_process(port2);
+    #ifdef DEBUG
+    clients_list(client_p);
+    #endif
+
+    if(!fork()) return message_process();
 
     struct in_addr any_ip;
     any_ip.s_addr = INADDR_ANY;
@@ -42,27 +49,48 @@ int server(int port1, int port2)
 
         if(!client_pid) 
         {
-            /* add address of client to addr_p */
+            /* get address of client for use in create_tcp_client */
             struct sockaddr_in client_sa;
-            socklen_t client_len;
+            socklen_t client_len = sizeof client_sa;
 
-            if(getpeername(client_fd, (struct sockaddr *)&client_sa, 
+            if(getpeername(client_fd, (struct sockaddr *)&client_sa,
                 &client_len) < 0)
             {
                 perror("server: getpeername");
                 return 1;
             }
 
+            struct in_addr client_addr = client_sa.sin_addr;
+
+            /* a socket connecting to client's message display process */
+            int message_socket = create_tcp_client(
+                inet_ntoa(client_addr), port2);
+            if(message_socket < 0)
+            {
+                fputs("server: error creating client message socket\n",
+                stderr);
+                return 1;
+            }
+
+            /* add socket to shared memory */
             for(int i = 0; i < MAX_CONNS; ++i)
             {
-                if(addr_p[i].s_addr == 0)
+                /* case of empty entry */
+                if(client_p[i] < 0)
                 {
-                    addr_p[i].s_addr = client_sa.sin_addr.s_addr;
+                    client_p[i] = message_socket;
                     break;
                 }
             }
 
-            addr_list(addr_p);
+            #ifdef DEBUG
+            fputs("client_p: ", stderr);
+            for(int i = 0; i < MAX_CONNS; ++i)
+            {
+                fprintf(stderr, "%d ", client_p[i]);
+            }
+            fputs("\n", stderr);
+            #endif
 
             return client_process(client_fd);
         }
@@ -108,21 +136,21 @@ static int client_process(int client_fd)
     return 0;
 }
 
-static int message_process(short port2)
+static int message_process()
 {
-    /* shared memory */
+    /* shared memory - attach */
     key_t messenger_key = ftok(SHM_PATH, SHM_KEY_ID);
 
     int messenger_shmid = shmget(messenger_key, 
-        (sizeof(struct in_addr[MAX_CONNS])), S_IWUSR | S_IRUSR);
+        (sizeof(int[MAX_CONNS])), S_IWUSR | S_IRUSR);
     if(messenger_shmid < 0)
     {
         perror("message_process: shmget");
         return 1;
     }
-    struct in_addr *addr_p = 
-        (struct in_addr *)shmat(messenger_shmid, NULL, 0);
-    if((void *)addr_p == (void *)-1)
+    int *client_p = 
+        (int *)shmat(messenger_shmid, NULL, 0);
+    if((void *)client_p == (void *)-1)
     {
         perror("message_process: shmat");
         return 1;
@@ -151,33 +179,18 @@ static int message_process(short port2)
         return 1;
     }
 
-    /* array of open client sockets */
-    int client_fd[MAX_CONNS];  
-    memset(client_fd, 0, sizeof client_fd);
-
     char msg_buf[MESSAGE_BUF_LEN];
     while(recv(message_fd, msg_buf, sizeof msg_buf, 0) > 0)
     {
-        int i;
-        for(i = 0; i < MAX_CONNS; ++i)
-        {
-            /* open new socket if client_fd is 0 */
-            if(client_fd[i] == 0)
-            {
-                if(!addr_p[i].s_addr) continue;
-                client_fd[i] = create_tcp_client(inet_ntoa(addr_p[i]), 
-                    port2);
-                break;
-            }
-        }
-        /* handle closed sockets here (no longer in shm) */
-        clients_list(client_fd);
+        #ifdef DEBUG
+        clients_list(client_p);
+        #endif
 
         /* loop through and write to open sockets */
         for(int j = 0; j < MAX_CONNS; ++j)
         {
-            if(client_fd[j] == 0) continue;
-            write(client_fd[j], msg_buf, sizeof msg_buf);
+            if(client_p[j] < 0) continue;
+            write(client_p[j], msg_buf, sizeof msg_buf);
         }
     }
 
@@ -192,10 +205,4 @@ static void clients_list(const int *client_fd)
     fputs("\n", stderr);
 }
 
-static void addr_list(const struct in_addr *addr_p)
-{
-    fputs("Addresses:", stderr);
-    for(int i = 0; i < MAX_CONNS; ++i)
-        fprintf(stderr, "%d ", addr_p[i].s_addr);
-    fputs("\n", stderr);
-}
+#endif
