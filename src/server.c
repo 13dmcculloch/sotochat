@@ -6,10 +6,12 @@
 static int client_process(int client_fd);
 static int message_process(short port2);
 
-static int clients_close(int *client_fd)
+static int clients_close(int *client_fd);
 
 static void clients_list(const int *client_fd);
 static void addr_list(const struct in_addr *addr_p);
+
+static void sort_child(int signal);
 
 int server(int port1, int port2)
 {
@@ -32,7 +34,10 @@ int server(int port1, int port2)
 
     memset(addr_p, 0, MAX_CONNS * sizeof(struct in_addr));
 
-    if(!fork()) return message_process(port2);
+    signal(SIGCHLD, sort_child);
+
+    pid_t message_pid = fork();
+    if(!message_pid) return message_process(port2);
 
     struct in_addr any_ip;
     any_ip.s_addr = INADDR_ANY;
@@ -42,8 +47,9 @@ int server(int port1, int port2)
     while((client_fd = accept(server_fd, (struct sockaddr *)NULL,
         NULL)) > 0)
     {
-        pid_t client_pid;
-        client_pid = fork();
+        signal(SIGCHLD, sort_child);
+
+        pid_t client_pid = fork();
 
         if(!client_pid) 
         {
@@ -227,6 +233,11 @@ static void addr_list(const struct in_addr *addr_p)
     for(int i = 0; i < MAX_CONNS; ++i)
         fprintf(stderr, "%d ", addr_p[i].s_addr);
     fputs("\n", stderr);
+}
+
+static void sort_child(int signal)
+{
+    wait(NULL);
 }
 
 #endif
