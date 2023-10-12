@@ -8,6 +8,8 @@ static int message_process(short port2);
 
 static struct in_addr *shm_create();
 static struct in_addr *shm_attach();
+static void shm_detach(const struct in_addr *addr_p);
+static void shm_destroy();
 
 static int clients_close(int *client_fd);
 
@@ -44,6 +46,8 @@ int server(int port1, int port2)
 
         if(!client_pid) 
         {
+            close(server_fd);
+
             /* add address of client to addr_p */
             struct sockaddr_in client_sa;
             socklen_t client_len;
@@ -52,6 +56,7 @@ int server(int port1, int port2)
                 &client_len) < 0)
             {
                 perror("server: getpeername");
+                close(client_fd);
                 return 1;
             }
 
@@ -71,6 +76,12 @@ int server(int port1, int port2)
             return client_process(client_fd);
         }
     }
+    
+    close(client_fd);
+    close(server_fd);
+
+    shm_detach(addr_p);
+    shm_destroy();
 
     return 0;
 }
@@ -132,6 +143,7 @@ static int message_process(short port2)
     if(message_fd < 0)
     {
         perror("message_process: socket");
+        shm_detach(addr_p);
         return 1;
     }
 
@@ -139,6 +151,7 @@ static int message_process(short port2)
         sizeof message_sa) < 0)
     {
         perror("message_process: bind");
+        shm_detach(addr_p);
         return 1;
     }
 
@@ -175,10 +188,17 @@ static int message_process(short port2)
             if(write(client_fd[j], msg_buf, sizeof msg_buf) < 0)
             {
                 perror("message_process: write");
+                shm_detach(addr_p);
+                clients_close(client_fd);
+                close(message_fd);
                 return 1;
             }
         }
     }
+
+    clients_close(client_fd);
+    shm_detach(addr_p);
+    close(message_fd);
 
     return 0;
 }
@@ -232,11 +252,29 @@ static struct in_addr *shm_attach()
     return addr_p;
 }
 
+static void shm_detach(const struct in_addr *addr_p)
+{
+    if(shmdt((const void *)addr_p) < 0)
+    {
+        perror("shm_detach");
+    }
+}
+
+static void shm_destroy()
+{
+    key_t messenger_key = ftok(SHM_PATH, SHM_KEY_ID);
+
+    if(shmctl(messenger_key, IPC_RMID, NULL) < 0)
+    {
+        perror("shmctl");
+    }
+}
+
 static int clients_close(int *client_fd)
 {
     for(int i = 0; i < MAX_CONNS; ++i)
     {
-        if(close(client_fd[i]))
+        if(close(client_fd[i]) < 0)
         {
             perror("clients_close: close");
             return 1;

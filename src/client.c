@@ -34,11 +34,24 @@ int client(char *server_ip, short port1, short port2)
         if(serialise_message(&msg, send_buf))
         {
             fputs("Error serialising message.\n", stderr);
+            close(server_fd);
             return 1;
         }
 
-        write(server_fd, send_buf, sizeof send_buf);
+        if(write(server_fd, send_buf, sizeof send_buf) < 0)
+        {
+            perror("client: write");
+            close(server_fd);
+            kill(messages_pid, SIGTERM);
+            return 1;
+        }
+
+        if(!strcmp(msg_buf, "exit\n")) break;
     }
+
+    close(server_fd);
+
+    kill(messages_pid, SIGTERM);
 
     return 0;
 }
@@ -55,12 +68,25 @@ static int receive_messages(char *server_ip, short port2)
     }
 
     char recv_buf[MESSAGE_BUF_LEN];
-    while(read(client_fd, recv_buf, sizeof recv_buf))
+    while(1)
     {
+        if(read(client_fd, recv_buf, sizeof recv_buf) < 0)
+        {
+            perror("receive_messages: read");
+            close(server_fd);
+            close(client_fd);
+            return 1;
+        }
+
         Message msg = deserialise_message(recv_buf);
 
         printf("%s: %s", msg.username, msg.message);
+        
+        if(!strcmp(msg.message, "exit\n")) break;
     }
+
+    close(server_fd);
+    close(client_fd);
     
     return 0;
 }
