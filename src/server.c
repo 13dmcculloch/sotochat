@@ -6,6 +6,9 @@
 static int client_process(int client_fd);
 static int message_process(short port2);
 
+static struct in_addr *shm_create();
+static struct in_addr *shm_attach();
+
 static int clients_close(int *client_fd);
 
 static void clients_list(const int *client_fd);
@@ -15,24 +18,12 @@ static void sort_child(int signal);
 
 int server(int port1, int port2)
 {
-    /* shared memory */
-    key_t messenger_key = ftok(SHM_PATH, SHM_KEY_ID);
-
-    int messenger_shmid = shmget(messenger_key, 
-        (sizeof(struct in_addr[MAX_CONNS])), IPC_CREAT | S_IWUSR | S_IRUSR);
-    if(messenger_shmid < 0)
+    struct in_addr *addr_p = shm_create();
+    if(addr_p == NULL)
     {
-        perror("server: shmget");
+        fputs("server: error creating shared memory\n", stderr);
         return 1;
     }
-    struct in_addr *addr_p = (struct in_addr *)shmat(messenger_shmid, NULL, 0);
-    if((void *)addr_p == (void *)-1)
-    {
-        perror("server: shmat");
-        return 1;
-    }
-
-    memset(addr_p, 0, MAX_CONNS * sizeof(struct in_addr));
 
     signal(SIGCHLD, sort_child);
 
@@ -123,26 +114,13 @@ static int client_process(int client_fd)
 
 static int message_process(short port2)
 {
-    /* shared memory */
-    key_t messenger_key = ftok(SHM_PATH, SHM_KEY_ID);
-
-    int messenger_shmid = shmget(messenger_key, 
-        (sizeof(struct in_addr[MAX_CONNS])), S_IWUSR | S_IRUSR);
-    if(messenger_shmid < 0)
+    struct in_addr *addr_p = shm_attach();
+    if(addr_p == NULL)
     {
-        perror("message_process: shmget");
-        return 1;
-    }
-    struct in_addr *addr_p = 
-        (struct in_addr *)shmat(messenger_shmid, NULL, 0);
-    if((void *)addr_p == (void *)-1)
-    {
-        perror("message_process: shmat");
+        fputs("message_process: error attaching shared memory\n", stderr);
         return 1;
     }
 
-    /* UNIX socket */
-    /* acts like a server. Must bind to local address */
     struct sockaddr_un message_sa;
     
     unlink(MESSENGER_PATH);
@@ -203,6 +181,55 @@ static int message_process(short port2)
     }
 
     return 0;
+}
+
+static struct in_addr *shm_create()
+{
+    static struct in_addr *addr_p = NULL;
+
+    key_t messenger_key = ftok(SHM_PATH, SHM_KEY_ID);
+
+    int messenger_shmid = shmget(messenger_key, 
+        (sizeof(struct in_addr[MAX_CONNS])), IPC_CREAT | S_IWUSR | S_IRUSR);
+    if(messenger_shmid < 0)
+    {
+        perror("server: shmget");
+        return addr_p;
+    }
+
+    addr_p = (struct in_addr *)shmat(messenger_shmid, NULL, 0);
+    if((void *)addr_p == (void *)-1)
+    {
+        perror("server: shmat");
+        return addr_p;
+    }
+
+    memset(addr_p, 0, MAX_CONNS * sizeof(struct in_addr));
+
+    return addr_p;
+}
+
+static struct in_addr *shm_attach()
+{
+    static struct in_addr *addr_p = NULL;
+
+    key_t messenger_key = ftok(SHM_PATH, SHM_KEY_ID);
+
+    int messenger_shmid = shmget(messenger_key, 
+        (sizeof(struct in_addr[MAX_CONNS])), S_IWUSR | S_IRUSR);
+    if(messenger_shmid < 0)
+    {
+        perror("message_process: shmget");
+        return addr_p;
+    }
+    addr_p = (struct in_addr *)shmat(messenger_shmid, NULL, 0);
+    if((void *)addr_p == (void *)-1)
+    {
+        perror("message_process: shmat");
+        return addr_p;
+    }
+
+    return addr_p;
 }
 
 static int clients_close(int *client_fd)
